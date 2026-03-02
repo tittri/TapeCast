@@ -196,10 +196,22 @@ class YouTubeDownloader:
                 keep_original=keep_original,
                 force=force
             )
-            ydl_opts['extract_flat'] = True  # Just get metadata
+            ydl_opts['extract_flat'] = 'in_playlist'  # Extract playlist metadata properly
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 playlist_info = ydl.extract_info(url, download=False)
+
+            # Handle both playlist types (direct playlist URL and video with playlist)
+            if playlist_info.get('_type') == 'url':
+                # This is a video URL with a playlist, extract the playlist instead
+                import re
+                playlist_match = re.search(r'list=([^&]+)', url)
+                if playlist_match:
+                    playlist_id = playlist_match.group(1)
+                    playlist_url = f"https://www.youtube.com/playlist?list={playlist_id}"
+                    playlist_info = ydl.extract_info(playlist_url, download=False)
+                else:
+                    raise DownloadError("Could not extract playlist from URL")
 
             if 'entries' not in playlist_info:
                 raise DownloadError("No videos found in playlist")
