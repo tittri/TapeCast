@@ -4,7 +4,7 @@ TapeCast CLI interface using Typer
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 import typer
 from rich.console import Console
@@ -15,6 +15,8 @@ from .downloader import YouTubeDownloader
 from .profiles import ProfileManager, ProfileType
 from .utils.logger import setup_logging, log_banner
 from .exceptions import TapeCastError
+from .queue import QueueManager, JobStatus
+from .publisher import PodcastFeed, FeedConfig
 from . import __version__
 
 
@@ -354,6 +356,18 @@ def process(
         False, "--dry-run",
         help="Show what would be done without processing"
     ),
+    trim_silence: bool = typer.Option(
+        False, "--trim-silence",
+        help="Trim silence from beginning and end of audio"
+    ),
+    trim_threshold: float = typer.Option(
+        -40.0, "--trim-threshold",
+        help="Threshold in dB for silence detection (default: -40)"
+    ),
+    trim_padding: float = typer.Option(
+        0.1, "--trim-padding",
+        help="Seconds of padding to leave after detected audio (default: 0.1)"
+    ),
 ):
     """Process YouTube video/playlist into podcast episode(s)"""
     from .enhancer import AudioEnhancer
@@ -489,6 +503,9 @@ def process(
                     target_loudness=loudness,
                     progress_tracker=tracker,
                     force=force,
+                    trim_silence=trim_silence,
+                    trim_threshold=trim_threshold,
+                    trim_padding=trim_padding,
                 )
 
             processed_files.append(enhanced_path)
@@ -576,6 +593,370 @@ def process(
         console.print(f"[red]Unexpected error:[/red] {e}")
         console.print_exception()  # Always show traceback for debugging
         raise typer.Exit(1)
+
+
+# Create queue subapp
+queue_app = typer.Typer(help="Manage processing queue")
+app.add_typer(queue_app, name="queue")
+
+
+@queue_app.command("add")
+def queue_add(
+    urls: List[str] = typer.Argument(..., help="YouTube URLs or local files to add to queue"),
+    profile: str = typer.Option("auto", "--profile", "-p", help="Enhancement profile to use"),
+):
+    """Add URLs to the processing queue"""
+    queue = QueueManager()
+    jobs = queue.add_batch(urls, profile)
+
+    console.print(f"[green]Added {len(jobs)} job(s) to queue[/green]")
+    for job in jobs:
+        console.print(f"  • {job.id[:8]}: {job.url}")
+
+    stats = queue.get_statistics()
+    console.print(f"\nQueue status: {stats['pending']} pending, {stats['processing']} processing")
+
+
+@queue_app.command("list")
+def queue_list(
+    status: Optional[str] = typer.Option(None, "--status", "-s",
+                                        help="Filter by status (pending/processing/completed/failed)"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum number of jobs to show"),
+):
+    """List jobs in the queue"""
+    queue = QueueManager()
+
+    # Parse status filter
+    status_filter = None
+    if status:
+        try:
+            status_filter = JobStatus(status.lower())
+        except ValueError:
+            console.print(f"[red]Invalid status: {status}[/red]")
+            console.print("Valid statuses: pending, processing, completed, failed, cancelled")
+            raise typer.Exit(1)
+
+    jobs = queue.list_jobs(status=status_filter, limit=limit)
+
+    if not jobs:
+        console.print("[yellow]No jobs in queue[/yellow]")
+        return
+
+    # Create table
+    table = Table(title="Processing Queue")
+    table.add_column("ID", style="cyan", width=12)
+    table.add_column("Status", style="yellow")
+    table.add_column("Profile")
+    table.add_column("URL", max_width=60)
+    table.add_column("Created")
+
+    for job in jobs:
+        # Status color
+        status_style = {
+            JobStatus.PENDING: "yellow",
+            JobStatus.PROCESSING: "cyan",
+            JobStatus.COMPLETED: "green",
+            JobStatus.FAILED: "red",
+            JobStatus.CANCELLED: "dim",
+        }.get(job.status, "white")
+
+        # Format creation time
+        created_dt = datetime.fromisoformat(job.created_at)
+        created_str = created_dt.strftime("%Y-%m-%d %H:%M")
+
+        table.add_row(
+            job.id[:12],
+            f"[{status_style}]{job.status.value}[/{status_style}]",
+            job.profile,
+            job.url[:60] + "..." if len(job.url) > 60 else job.url,
+            created_str
+        )
+
+    console.print(table)
+
+    # Show statistics
+    stats = queue.get_statistics()
+    console.print(f"\nTotal: {stats['total']} | "
+                 f"Pending: {stats['pending']} | "
+                 f"Processing: {stats['processing']} | "
+                 f"Completed: {stats['completed']} | "
+                 f"Failed: {stats['failed']}")
+
+
+@queue_app.command("process")
+def queue_process(
+    workers: int = typer.Option(4, "--workers", "-w", help="Number of parallel workers"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p",
+                                         help="Override profile for all jobs"),
+    force: bool = typer.Option(False, "--force", help="Force reprocessing"),
+    stop_on_error: bool = typer.Option(False, "--stop-on-error",
+                                      help="Stop processing on first error"),
+):
+    """Process all pending jobs in the queue"""
+    from .enhancer import AudioEnhancer
+    from .downloader import YouTubeDownloader
+    from .metadata import MetadataExtractor
+    from pathlib import Path
+
+    queue = QueueManager()
+    stats = queue.get_statistics()
+
+    if stats['pending'] == 0:
+        console.print("[yellow]No pending jobs to process[/yellow]")
+        return
+
+    console.print(f"[cyan]Processing {stats['pending']} pending job(s) with {workers} worker(s)[/cyan]")
+
+    def process_job(job):
+        """Process a single job"""
+        try:
+            console.print(f"\n[cyan]Processing job {job.id[:8]}: {job.url}[/cyan]")
+
+            # Use provided profile or job's profile
+            job_profile = profile or job.profile
+
+            # Check if it's a local file
+            local_path = Path(job.url)
+            if local_path.exists() and local_path.is_file():
+                audio_files = [local_path]
+            else:
+                # Download from YouTube
+                downloader = YouTubeDownloader(output_dir=settings.downloads_dir)
+                download_results = downloader.download(
+                    url=job.url,
+                    force=force
+                )
+                audio_files = [r.file_path for r in download_results if r.is_success]
+
+            if not audio_files:
+                raise Exception("No files downloaded successfully")
+
+            # Process each file
+            enhancer = AudioEnhancer()
+            for audio_file in audio_files:
+                output_name = f"{audio_file.stem}_tapecasted.mp3"
+                output_path = settings.processed_dir / output_name
+
+                enhanced_path = enhancer.enhance(
+                    input_path=audio_file,
+                    output_path=output_path,
+                    profile=ProfileManager.get_profile_by_name(job_profile),
+                    force=force
+                )
+
+                queue.update_job_status(job.id, JobStatus.COMPLETED,
+                                      output_path=str(enhanced_path))
+
+            console.print(f"[green]✓ Job {job.id[:8]} completed[/green]")
+            return True
+
+        except Exception as e:
+            console.print(f"[red]✗ Job {job.id[:8]} failed: {e}[/red]")
+            queue.update_job_status(job.id, JobStatus.FAILED, error_message=str(e))
+            return False
+
+    # Process the queue
+    result = queue.process_queue(
+        processor_func=process_job,
+        max_workers=workers,
+        stop_on_error=stop_on_error
+    )
+
+    console.print(f"\n[green]Queue processing complete![/green]")
+    console.print(f"  Processed: {result['processed']}")
+    console.print(f"  Succeeded: {result['succeeded']}")
+    console.print(f"  Failed: {result['failed']}")
+
+
+@queue_app.command("clear")
+def queue_clear(
+    completed: bool = typer.Option(False, "--completed", help="Clear completed jobs"),
+    failed: bool = typer.Option(False, "--failed", help="Clear failed jobs"),
+    all: bool = typer.Option(False, "--all", help="Clear all completed and failed jobs"),
+):
+    """Clear jobs from the queue"""
+    queue = QueueManager()
+
+    if all or (completed and failed):
+        removed = queue.clear_completed()
+        console.print(f"[green]Cleared {removed} completed/failed job(s)[/green]")
+    elif completed:
+        # Clear only completed
+        original_stats = queue.get_statistics()
+        queue.jobs = [j for j in queue.jobs if j.status != JobStatus.COMPLETED]
+        removed = original_stats['completed']
+        queue._save_queue()
+        console.print(f"[green]Cleared {removed} completed job(s)[/green]")
+    elif failed:
+        # Clear only failed
+        original_stats = queue.get_statistics()
+        queue.jobs = [j for j in queue.jobs if j.status != JobStatus.FAILED]
+        removed = original_stats['failed']
+        queue._save_queue()
+        console.print(f"[green]Cleared {removed} failed job(s)[/green]")
+    else:
+        console.print("[yellow]Specify --completed, --failed, or --all[/yellow]")
+        raise typer.Exit(1)
+
+
+@queue_app.command("cancel")
+def queue_cancel(
+    job_id: Optional[str] = typer.Argument(None, help="Job ID to cancel (or 'all' for all pending)"),
+):
+    """Cancel pending job(s)"""
+    queue = QueueManager()
+
+    if not job_id:
+        console.print("[yellow]Specify a job ID or 'all' to cancel all pending jobs[/yellow]")
+        raise typer.Exit(1)
+
+    if job_id.lower() == "all":
+        cancelled = queue.cancel_all_pending()
+        console.print(f"[green]Cancelled {cancelled} pending job(s)[/green]")
+    else:
+        if queue.cancel_job(job_id):
+            console.print(f"[green]Cancelled job {job_id}[/green]")
+        else:
+            console.print(f"[red]Job {job_id} not found or not cancellable[/red]")
+            raise typer.Exit(1)
+
+
+# Create publish subapp
+publish_app = typer.Typer(help="Generate and manage RSS podcast feeds")
+app.add_typer(publish_app, name="publish")
+
+
+@publish_app.command("init")
+def publish_init(
+    title: str = typer.Option(..., "--title", "-t", help="Podcast title"),
+    description: str = typer.Option(..., "--description", "-d", help="Podcast description"),
+    author: str = typer.Option(..., "--author", "-a", help="Podcast author"),
+    base_url: str = typer.Option("http://localhost:8000", "--base-url", "-u",
+                                 help="Base URL where files will be hosted"),
+    email: Optional[str] = typer.Option(None, "--email", help="Contact email"),
+    website: Optional[str] = typer.Option(None, "--website", help="Podcast website"),
+    category: str = typer.Option("Technology", "--category", help="iTunes category"),
+):
+    """Initialize RSS feed configuration"""
+    config = FeedConfig()
+    config.config.update({
+        'title': title,
+        'description': description,
+        'author': author,
+        'base_url': base_url,
+        'language': 'en-US',
+        'category': category,
+        'explicit': False,
+    })
+
+    if email:
+        config.config['email'] = email
+    if website:
+        config.config['website'] = website
+
+    config.save()
+    console.print(f"[green]Feed configuration saved to {config.config_file}[/green]")
+    console.print(f"\nTitle: {title}")
+    console.print(f"Author: {author}")
+    console.print(f"Base URL: {base_url}")
+
+
+@publish_app.command("generate")
+def publish_generate(
+    output: Path = typer.Option(Path("feed.xml"), "--output", "-o",
+                               help="Output RSS feed file"),
+    directory: Path = typer.Option(None, "--directory", "-d",
+                                  help="Directory containing audio files (default: processed dir)"),
+    pattern: str = typer.Option("*.mp3", "--pattern", "-p",
+                               help="File pattern to match"),
+    limit: int = typer.Option(50, "--limit", "-l",
+                            help="Maximum number of episodes"),
+    sort: str = typer.Option("date", "--sort", "-s",
+                           help="Sort by: date, name, or size"),
+    reverse: bool = typer.Option(True, "--reverse", "-r",
+                                help="Reverse sort order (newest first)"),
+):
+    """Generate RSS feed from processed audio files"""
+    # Load configuration
+    config = FeedConfig()
+    feed = config.create_feed()
+
+    # Use default processed directory if not specified
+    if directory is None:
+        directory = settings.processed_dir
+
+    if not directory.exists():
+        console.print(f"[red]Directory not found: {directory}[/red]")
+        raise typer.Exit(1)
+
+    # Add episodes
+    count = feed.add_episodes_from_directory(
+        directory=directory,
+        pattern=pattern,
+        sort_by=sort,
+        reverse=reverse,
+        limit=limit,
+    )
+
+    if count == 0:
+        console.print(f"[yellow]No audio files found in {directory}[/yellow]")
+        raise typer.Exit(1)
+
+    # Save feed
+    feed.save(output)
+    console.print(f"[green]Generated RSS feed with {count} episodes[/green]")
+    console.print(f"Saved to: {output}")
+
+
+@publish_app.command("serve")
+def publish_serve(
+    port: int = typer.Option(8000, "--port", "-p", help="Port to serve on"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host to bind to"),
+    directory: Optional[Path] = typer.Option(None, "--directory", "-d",
+                                            help="Directory containing audio files"),
+):
+    """Serve RSS feed via HTTP for testing"""
+    # Load configuration
+    config = FeedConfig()
+    feed = config.create_feed()
+
+    # Use default processed directory if not specified
+    if directory is None:
+        directory = settings.processed_dir
+
+    # Add episodes
+    count = feed.add_episodes_from_directory(directory=directory)
+
+    if count == 0:
+        console.print(f"[yellow]No audio files found in {directory}[/yellow]")
+        console.print("[yellow]Serving empty feed for testing[/yellow]")
+
+    console.print(f"[green]Starting RSS feed server[/green]")
+    console.print(f"Feed URL: http://{host}:{port}/feed.xml")
+    console.print(f"Episodes: {count}")
+    console.print("\n[yellow]Press Ctrl+C to stop[/yellow]\n")
+
+    try:
+        feed.serve(host=host, port=port)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Server stopped[/yellow]")
+
+
+@publish_app.command("show")
+def publish_show():
+    """Show current feed configuration"""
+    config = FeedConfig()
+
+    table = Table(title="RSS Feed Configuration")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value", style="white")
+
+    for key, value in config.config.items():
+        if value is not None:
+            table.add_row(key.replace('_', ' ').title(), str(value))
+
+    console.print(table)
+    console.print(f"\n[dim]Config file: {config.config_file}[/dim]")
 
 
 if __name__ == "__main__":

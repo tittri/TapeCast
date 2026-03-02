@@ -24,7 +24,7 @@ from pedalboard import (
 )
 from .profiles import EnhancementProfile, ProfileManager, ProfileType
 from .utils.ffmpeg import FFmpegWrapper
-from .utils.audio import load_audio, save_audio, get_audio_stats
+from .utils.audio import load_audio, save_audio, get_audio_stats, trim_silence as trim_silence_from_audio
 from .utils.progress import ProgressTracker
 from .utils.logger import get_logger, console
 from .exceptions import ProcessingError
@@ -62,6 +62,9 @@ class AudioEnhancer:
         target_loudness: float = -16.0,
         progress_tracker: Optional[ProgressTracker] = None,
         force: bool = False,
+        trim_silence: bool = False,
+        trim_threshold: float = -40.0,
+        trim_padding: float = 0.1,
     ) -> Path:
         """
         Main enhancement pipeline
@@ -75,6 +78,9 @@ class AudioEnhancer:
             target_loudness: Target loudness in LUFS
             progress_tracker: Optional progress tracker
             force: Force reprocessing even if output exists
+            trim_silence: Whether to trim silence from beginning and end
+            trim_threshold: Threshold in dB for silence detection
+            trim_padding: Seconds of padding to leave after detected audio
 
         Returns:
             Path to enhanced audio file
@@ -126,7 +132,9 @@ class AudioEnhancer:
                     progress_tracker.start_stage(2, "Audio enhancement", 100)
 
                 self._stage2_python_processing(
-                    stage1_output, stage2_output, profile, progress_tracker
+                    stage1_output, stage2_output, profile, progress_tracker,
+                    trim_silence=trim_silence, trim_threshold=trim_threshold,
+                    trim_padding=trim_padding
                 )
 
                 if progress_tracker:
@@ -211,6 +219,9 @@ class AudioEnhancer:
         output_path: Path,
         profile: EnhancementProfile,
         progress: Optional[ProgressTracker] = None,
+        trim_silence: bool = False,
+        trim_threshold: float = -40.0,
+        trim_padding: float = 0.1,
     ) -> None:
         """
         Stage 2: Python processing
@@ -222,6 +233,27 @@ class AudioEnhancer:
 
         # Load audio
         audio_data, sample_rate = load_audio(input_path, sample_rate=settings.sample_rate)
+
+        # Apply silence trimming if requested
+        if trim_silence:
+            logger.debug(f"Trimming silence with threshold {trim_threshold}dB")
+            if progress:
+                progress.update_stage(10, "Trimming silence")
+
+            original_duration = audio_data.shape[1] / sample_rate if audio_data.ndim == 2 else len(audio_data) / sample_rate
+            audio_data = trim_silence_from_audio(
+                audio_data,
+                sample_rate,
+                threshold_db=trim_threshold,
+                padding=trim_padding,
+                trim_start=True,
+                trim_end=True
+            )
+            new_duration = audio_data.shape[1] / sample_rate if audio_data.ndim == 2 else len(audio_data) / sample_rate
+            trimmed = original_duration - new_duration
+
+            if trimmed > 0:
+                logger.info(f"Trimmed {trimmed:.2f}s of silence (from {original_duration:.2f}s to {new_duration:.2f}s)")
 
         # Get processing parameters
         params = profile.get_stage2_params()

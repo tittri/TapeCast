@@ -218,6 +218,79 @@ def detect_silence(
     return silence_segments
 
 
+def trim_silence(
+    audio_data: np.ndarray,
+    sample_rate: int,
+    threshold_db: float = -40,
+    min_silence_duration: float = 0.5,
+    trim_start: bool = True,
+    trim_end: bool = True,
+    padding: float = 0.1
+) -> np.ndarray:
+    """
+    Trim silence from beginning and/or end of audio
+
+    Args:
+        audio_data: Audio data with shape (channels, samples)
+        sample_rate: Sample rate
+        threshold_db: Silence threshold in dB
+        min_silence_duration: Minimum duration to consider as silence
+        trim_start: Whether to trim silence from beginning
+        trim_end: Whether to trim silence from end
+        padding: Seconds of padding to leave after detected audio
+
+    Returns:
+        Trimmed audio data
+    """
+    if not trim_start and not trim_end:
+        return audio_data
+
+    # Convert to mono for silence detection
+    if audio_data.ndim == 2:
+        mono = np.mean(audio_data, axis=0)
+        is_stereo = True
+    else:
+        mono = audio_data
+        is_stereo = False
+
+    # Convert threshold to linear
+    threshold_linear = 10 ** (threshold_db / 20)
+
+    # Find samples above threshold (non-silence)
+    is_audio = np.abs(mono) >= threshold_linear
+
+    if not np.any(is_audio):
+        # All silence, return minimal audio to avoid empty file
+        logger.warning("Audio is all silence, returning minimal audio")
+        return audio_data[:, :int(sample_rate * 0.1)] if is_stereo else audio_data[:int(sample_rate * 0.1)]
+
+    # Find first and last non-silence samples
+    non_silence_indices = np.where(is_audio)[0]
+
+    # Add padding in samples
+    padding_samples = int(padding * sample_rate)
+
+    # Calculate trim points
+    start_sample = 0
+    end_sample = len(mono)
+
+    if trim_start and len(non_silence_indices) > 0:
+        start_sample = max(0, non_silence_indices[0] - padding_samples)
+        logger.debug(f"Trimming {start_sample / sample_rate:.2f}s from start")
+
+    if trim_end and len(non_silence_indices) > 0:
+        end_sample = min(len(mono), non_silence_indices[-1] + padding_samples)
+        trimmed_end = (len(mono) - end_sample) / sample_rate
+        if trimmed_end > 0:
+            logger.debug(f"Trimming {trimmed_end:.2f}s from end")
+
+    # Apply trim
+    if is_stereo:
+        return audio_data[:, start_sample:end_sample]
+    else:
+        return audio_data[start_sample:end_sample]
+
+
 def analyze_frequency_content(
     audio_data: np.ndarray,
     sample_rate: int,
