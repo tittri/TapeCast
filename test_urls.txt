@@ -1,0 +1,27 @@
+# Test batch file for TapeCast
+# This file contains YouTube URLs for testing batch processing
+
+# Single video - the one you tested earlier
+https://www.youtube.com/watch?v=6alQsbGNTOo
+
+# Another video from the playlist
+https://www.youtube.com/watch?v=m_zoftv7yL0
+
+# Playlist URL
+https://www.youtube.com/playlist?list=PL4ZipnPb-AeRHXEdkCLfoX0e4qwZGfFvC
+
+# Short form YouTube URL
+https://youtu.be/6alQsbGNTOo
+
+# Empty line above and below
+
+# URL without protocol (should be auto-fixed)
+youtube.com/watch?v=6alQsbGNTOo
+
+# Invalid URL to test skipping
+not-a-valid-url
+
+# Another invalid line
+this is just text
+
+# End of file

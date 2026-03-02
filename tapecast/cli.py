@@ -17,6 +17,7 @@ from .utils.logger import setup_logging, log_banner
 from .exceptions import TapeCastError
 from .queue import QueueManager, JobStatus
 from .publisher import PodcastFeed, FeedConfig
+from .batch_loader import BatchLoader
 from . import __version__
 
 
@@ -615,6 +616,86 @@ def queue_add(
 
     stats = queue.get_statistics()
     console.print(f"\nQueue status: {stats['pending']} pending, {stats['processing']} processing")
+
+
+@queue_app.command("add-from-file")
+def queue_add_from_file(
+    file_path: Path = typer.Argument(..., help="Text file containing YouTube URLs (one per line)"),
+    profile: str = typer.Option("auto", "--profile", "-p", help="Enhancement profile to use"),
+    skip_invalid: bool = typer.Option(False, "--skip-invalid", help="Skip invalid URLs instead of failing"),
+    deduplicate: bool = typer.Option(True, "--deduplicate", help="Remove duplicate URLs"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be added without actually adding"),
+):
+    """Add URLs from a text file to the processing queue"""
+    try:
+        # Check if file exists
+        if not file_path.exists():
+            console.print(f"[red]Error: File not found: {file_path}[/red]")
+            raise typer.Exit(1)
+
+        console.print(f"[cyan]Loading URLs from: {file_path}[/cyan]")
+
+        # Load URLs from file
+        valid_urls, skipped_lines = BatchLoader.load_urls_from_file(
+            file_path=file_path,
+            skip_invalid=skip_invalid,
+            validate_youtube=True
+        )
+
+        if not valid_urls:
+            console.print("[yellow]No valid URLs found in file[/yellow]")
+            return
+
+        # Remove duplicates if requested
+        if deduplicate:
+            unique_urls, duplicate_count = BatchLoader.deduplicate_urls(valid_urls)
+            if duplicate_count > 0:
+                console.print(f"[yellow]Removed {duplicate_count} duplicate URL(s)[/yellow]")
+            valid_urls = unique_urls
+
+        # Show what was found
+        console.print(f"\n[green]Found {len(valid_urls)} valid URL(s)[/green]")
+
+        # Show first few URLs as preview
+        preview_count = min(5, len(valid_urls))
+        for url in valid_urls[:preview_count]:
+            console.print(f"  • {url[:80]}..." if len(url) > 80 else f"  • {url}")
+
+        if len(valid_urls) > preview_count:
+            console.print(f"  ... and {len(valid_urls) - preview_count} more")
+
+        # Show skipped lines if any
+        if skipped_lines:
+            console.print(f"\n[yellow]Skipped {len(skipped_lines)} invalid line(s):[/yellow]")
+            for line in skipped_lines[:3]:
+                console.print(f"  • {line}")
+            if len(skipped_lines) > 3:
+                console.print(f"  ... and {len(skipped_lines) - 3} more")
+
+        # If dry run, stop here
+        if dry_run:
+            console.print("\n[yellow]Dry run mode - no URLs were added to the queue[/yellow]")
+            return
+
+        # Add to queue
+        queue = QueueManager()
+        jobs = queue.add_batch(valid_urls, profile)
+
+        console.print(f"\n[green]✓ Added {len(jobs)} job(s) to queue[/green]")
+
+        # Show queue statistics
+        stats = queue.get_statistics()
+        console.print(f"\nQueue status:")
+        console.print(f"  Pending: {stats['pending']}")
+        console.print(f"  Processing: {stats['processing']}")
+        console.print(f"  Total: {stats['total']}")
+
+    except TapeCastError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Unexpected error: {e}[/red]")
+        raise typer.Exit(1)
 
 
 @queue_app.command("list")
