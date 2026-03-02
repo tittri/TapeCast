@@ -26,6 +26,7 @@ class DownloadResult:
     metadata: Dict[str, Any]
     source_url: str
     playlist_index: Optional[int] = None
+    playlist_title: Optional[str] = None
     error: Optional[str] = None
 
     @property
@@ -217,6 +218,7 @@ class YouTubeDownloader:
                         metadata={},
                         source_url=url,
                         playlist_index=idx,
+                        playlist_title=playlist_title,
                         error="Video is deleted or private"
                     ))
                     continue
@@ -230,6 +232,7 @@ class YouTubeDownloader:
                 result = self._download_single_from_playlist(
                     video_url,
                     playlist_index=idx,
+                    playlist_title=playlist_title,
                     total_videos=total_videos,
                     progress_bar=progress_bar,
                     task_id=task_id,
@@ -259,6 +262,7 @@ class YouTubeDownloader:
         self,
         url: str,
         playlist_index: int,
+        playlist_title: str,
         total_videos: int,
         progress_bar: Optional[Progress] = None,
         task_id: Optional[int] = None,
@@ -289,6 +293,7 @@ class YouTubeDownloader:
                         metadata=self._extract_metadata(info),
                         source_url=url,
                         playlist_index=playlist_index,
+                        playlist_title=playlist_title,
                     )
 
                 # Download the file
@@ -334,6 +339,7 @@ class YouTubeDownloader:
                     metadata=metadata,
                     source_url=url,
                     playlist_index=playlist_index,
+                    playlist_title=playlist_title,
                 )
 
         except Exception as e:
@@ -343,6 +349,7 @@ class YouTubeDownloader:
                 metadata={},
                 source_url=url,
                 playlist_index=playlist_index,
+                playlist_title=playlist_title,
                 error=str(e)
             )
 

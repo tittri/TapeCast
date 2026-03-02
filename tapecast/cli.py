@@ -460,9 +460,19 @@ def process(
             safe_title = re.sub(r'[<>:"/\\|?*]', '_', original_title)
             safe_title = safe_title.strip()
 
+            # Check if this is part of a playlist and create subfolder if needed
+            if download_results and download_results[0].playlist_title:
+                # Sanitize playlist title for folder name
+                playlist_folder = re.sub(r'[<>:"/\\|?*]', '_', download_results[0].playlist_title)
+                playlist_folder = playlist_folder.strip()
+                output_dir = settings.processed_dir / playlist_folder
+                output_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                output_dir = settings.processed_dir
+
             # Generate output filename with _tapecasted suffix
             output_name = f"{safe_title}_tapecasted.{format}"
-            output_path = settings.processed_dir / output_name
+            output_path = output_dir / output_name
 
             # Create progress tracker
             with ProgressTracker(
@@ -539,7 +549,15 @@ def process(
         # Show summary
         console.print(f"\n[green]✓ Processing complete![/green]")
         console.print(f"  Processed {len(processed_files)} file(s)")
-        console.print(f"  Output directory: {settings.processed_dir}")
+
+        # Show correct output directory
+        if download_results and download_results[0].playlist_title:
+            import re
+            playlist_folder = re.sub(r'[<>:"/\\|?*]', '_', download_results[0].playlist_title)
+            playlist_folder = playlist_folder.strip()
+            console.print(f"  Output directory: {settings.processed_dir / playlist_folder}")
+        else:
+            console.print(f"  Output directory: {settings.processed_dir}")
 
         if ai_metadata:
             console.print("\n[yellow]Note: AI metadata enhancement is not yet implemented[/yellow]")
