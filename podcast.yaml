@@ -1,0 +1,25 @@
+# TapeCast Podcast Configuration
+# This file is used when publishing to podcast RSS feed
+
+podcast:
+  title: "My Restored Podcast"
+  description: "Classic recordings restored and enhanced with TapeCast"
+  author: "Your Name"
+  email: "your.email@example.com"
+  language: "en"
+  category: "History"
+  subcategory: "Documentary"
+  image: "./cover-art.jpg"  # Path to podcast cover art (minimum 1400x1400)
+  website: "https://example.com"
+  explicit: false
+
+hosting:
+  # Base URL where audio files will be hosted (for generating enclosure URLs)
+  base_url: "https://example.com/episodes/"
+
+# Feed settings
+feed:
+  max_episodes: 100  # Maximum number of episodes to include in feed
+  copyright: "© 2024 Your Name"
+  iTunes_owner: "Your Name"
+  iTunes_email: "your.email@example.com"

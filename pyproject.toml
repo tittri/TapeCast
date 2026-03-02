@@ -1,0 +1,115 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tapecast"
+version = "0.1.0"
+description = "YouTube-to-Podcast Audio Enhancement CLI - Transform YouTube videos into podcast episodes with retro audio profiles"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+keywords = ["podcast", "youtube", "audio", "enhancement", "cli", "yt-dlp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Topic :: Multimedia :: Sound/Audio",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "typer[all]>=0.9.0",
+    "rich>=13.0",
+    "yt-dlp>=2024.0",
+    "pedalboard>=0.9.0",
+    "noisereduce>=3.0",
+    "mutagen>=1.47",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "pyyaml>=6.0",
+    "feedgen>=1.0",
+    "Pillow>=10.0",
+    "numpy>=1.24",
+    "soundfile>=0.12",
+    "scipy>=1.11",
+    "httpx>=0.25",
+]
+
+[project.optional-dependencies]
+ai = [
+    "openai-whisper>=20231117",
+    "anthropic>=0.39.0",
+]
+youtube = [
+    "google-api-python-client>=2.100",
+    "google-auth-oauthlib>=1.1",
+    "google-auth-httplib2>=0.1",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-mock>=3.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+    "black>=23.0",
+]
+all = [
+    "tapecast[ai,youtube]",
+]
+
+[project.scripts]
+tapecast = "tapecast.cli:app"
+
+[project.urls]
+"Homepage" = "https://github.com/yourusername/tapecast"
+"Bug Tracker" = "https://github.com/yourusername/tapecast/issues"
+"Documentation" = "https://github.com/yourusername/tapecast#readme"
+
+[tool.setuptools]
+packages = ["tapecast", "tapecast.utils"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-ra -q --strict-markers"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "B008",  # do not perform function calls in argument defaults
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+check_untyped_defs = true
