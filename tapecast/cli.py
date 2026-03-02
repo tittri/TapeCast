@@ -441,8 +441,27 @@ def process(
                 profile_obj = ProfileManager.auto_detect(audio_file)
                 console.print(f"[cyan]Using profile: {profile_obj.name}[/cyan]")
 
-            # Generate output filename
-            output_name = f"{audio_file.stem}_enhanced.{format}"
+            # Get metadata first to extract the original title
+            if download_results and idx <= len(download_results):
+                download_metadata = download_results[idx-1].metadata
+                # Use the original title from YouTube for the output filename
+                original_title = download_metadata.get('title', audio_file.stem)
+            else:
+                # Local file - create basic metadata
+                download_metadata = {
+                    'title': audio_file.stem,
+                    'description': f"Local file: {audio_file.name}",
+                    'is_local_file': True,
+                }
+                original_title = audio_file.stem
+
+            # Sanitize the title for use as a filename
+            import re
+            safe_title = re.sub(r'[<>:"/\\|?*]', '_', original_title)
+            safe_title = safe_title.strip()
+
+            # Generate output filename with _tapecasted suffix
+            output_name = f"{safe_title}_tapecasted.{format}"
             output_path = settings.processed_dir / output_name
 
             # Create progress tracker
@@ -466,16 +485,6 @@ def process(
 
             # Extract metadata
             console.print(f"[dim]Extracting metadata...[/dim]")
-
-            if download_results and idx <= len(download_results):
-                download_metadata = download_results[idx-1].metadata
-            else:
-                # Local file - create basic metadata
-                download_metadata = {
-                    'title': audio_file.stem,
-                    'description': f"Local file: {audio_file.name}",
-                    'is_local_file': True,
-                }
 
             metadata = metadata_extractor.extract_from_download(
                 download_metadata,
