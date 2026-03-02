@@ -138,7 +138,7 @@ class YouTubeDownloader:
                     matching_files = list(self.output_dir.glob(pattern))
                     if matching_files:
                         output_path = matching_files[0]
-                        logger.debug(f"Found actual file: {output_path}")
+                        logger.debug(f"Found actual file by ID: {output_path}")
                     else:
                         # Try with sanitized title
                         sanitized_title = self._sanitize_filename(info.get('title', 'Unknown'))
@@ -146,8 +146,16 @@ class YouTubeDownloader:
                         matching_files = list(self.output_dir.glob(pattern))
                         if matching_files:
                             output_path = matching_files[0]
+                            logger.debug(f"Found actual file by title: {output_path}")
                         else:
-                            output_path = expected_path
+                            # Last resort: find any new WAV file
+                            wav_files = list(self.output_dir.glob("*.wav"))
+                            if wav_files:
+                                # Get the most recently created file
+                                output_path = max(wav_files, key=lambda p: p.stat().st_mtime)
+                                logger.debug(f"Found actual file by newest: {output_path}")
+                            else:
+                                output_path = expected_path
                 else:
                     output_path = expected_path
 
@@ -296,7 +304,7 @@ class YouTubeDownloader:
                     matching_files = list(self.output_dir.glob(pattern))
                     if matching_files:
                         output_path = matching_files[0]
-                        logger.debug(f"Found actual file: {output_path}")
+                        logger.debug(f"Found actual file by ID: {output_path}")
                     else:
                         # Try with sanitized title
                         sanitized_title = self._sanitize_filename(info.get('title', 'Unknown'))
@@ -304,8 +312,16 @@ class YouTubeDownloader:
                         matching_files = list(self.output_dir.glob(pattern))
                         if matching_files:
                             output_path = matching_files[0]
+                            logger.debug(f"Found actual file by title: {output_path}")
                         else:
-                            output_path = expected_path
+                            # Last resort: find any new WAV file
+                            wav_files = list(self.output_dir.glob("*.wav"))
+                            if wav_files:
+                                # Get the most recently created file
+                                output_path = max(wav_files, key=lambda p: p.stat().st_mtime)
+                                logger.debug(f"Found actual file by newest: {output_path}")
+                            else:
+                                output_path = expected_path
                 else:
                     output_path = expected_path
 
@@ -339,11 +355,11 @@ class YouTubeDownloader:
         force: bool = False,
     ) -> Dict[str, Any]:
         """Build yt-dlp options dictionary"""
-        # Output template
+        # Output template - include ID for better matching with non-ASCII titles
         if playlist_index:
-            outtmpl = str(self.output_dir / f"{playlist_index:03d}_%(title)s.%(ext)s")
+            outtmpl = str(self.output_dir / f"{playlist_index:03d}_%(id)s_%(title)s.%(ext)s")
         else:
-            outtmpl = str(self.output_dir / "%(title)s.%(ext)s")
+            outtmpl = str(self.output_dir / "%(id)s_%(title)s.%(ext)s")
 
         ydl_opts = {
             'format': 'bestaudio/best',
@@ -391,9 +407,9 @@ class YouTubeDownloader:
         video_id = info.get('id', '')
 
         if playlist_index:
-            base_name = f"{playlist_index:03d}_{title}"
+            base_name = f"{playlist_index:03d}_{video_id}_{title}"
         else:
-            base_name = title
+            base_name = f"{video_id}_{title}"
 
         # yt-dlp will have converted to WAV if we requested audio extraction
         return self.output_dir / f"{base_name}.wav"
