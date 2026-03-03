@@ -677,11 +677,19 @@ def queue_add_from_file(
             console.print("\n[yellow]Dry run mode - no URLs were added to the queue[/yellow]")
             return
 
-        # Add to queue
+        # Add to queue with batch file metadata
         queue = QueueManager()
-        jobs = queue.add_batch(valid_urls, profile)
+        batch_file_name = file_path.stem  # Get filename without extension
+        jobs = []
+        for url in valid_urls:
+            job = queue.add_job(
+                url=url,
+                profile=profile,
+                metadata={'batch_file': batch_file_name, 'batch_file_path': str(file_path)}
+            )
+            jobs.append(job)
 
-        console.print(f"\n[green]✓ Added {len(jobs)} job(s) to queue[/green]")
+        console.print(f"\n[green]✓ Added {len(jobs)} job(s) to queue from batch file: {batch_file_name}[/green]")
 
         # Show queue statistics
         stats = queue.get_statistics()
@@ -814,14 +822,44 @@ def queue_process(
 
             # Process each file
             enhancer = AudioEnhancer()
+
+            # Check if we downloaded from a playlist (takes priority over batch file)
+            playlist_title = None
+            if 'download_results' in locals() and download_results and download_results[0].playlist_title:
+                playlist_title = download_results[0].playlist_title
+
             for audio_file in audio_files:
-                output_name = f"{audio_file.stem}_tapecasted.mp3"
-                output_path = settings.processed_dir / output_name
+                # Determine output path with priority: playlist > batch file > default
+                if playlist_title:
+                    # Playlist folder takes priority
+                    import re
+                    playlist_folder = re.sub(r'[<>:"/\\|?*]', '_', playlist_title)
+                    playlist_folder = playlist_folder.strip()
+                    output_dir = settings.processed_dir / playlist_folder
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    output_name = f"{audio_file.stem}_tapecasted.mp3"
+                    output_path = output_dir / output_name
+                    console.print(f"  [dim]Output folder: {playlist_folder}/ (playlist)[/dim]")
+                elif job.metadata and 'batch_file' in job.metadata:
+                    # Create folder for batch file outputs
+                    batch_folder = job.metadata['batch_file']
+                    output_dir = settings.processed_dir / batch_folder
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    output_name = f"{audio_file.stem}_tapecasted.mp3"
+                    output_path = output_dir / output_name
+                    console.print(f"  [dim]Output folder: {batch_folder}/ (batch)[/dim]")
+                else:
+                    # Regular output path
+                    output_name = f"{audio_file.stem}_tapecasted.mp3"
+                    output_path = settings.processed_dir / output_name
+
+                # Get profile (None for auto)
+                profile_obj = ProfileManager.get_profile_by_name(job_profile)
 
                 enhanced_path = enhancer.enhance(
                     input_path=audio_file,
                     output_path=output_path,
-                    profile=ProfileManager.get_profile_by_name(job_profile),
+                    profile=profile_obj,
                     force=force
                 )
 

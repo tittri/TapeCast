@@ -1,0 +1,9 @@
+# Islamic Lectures Batch
+# This batch contains Islamic lecture videos
+
+# Single lecture videos
+https://www.youtube.com/watch?v=6alQsbGNTOo
+https://www.youtube.com/watch?v=m_zoftv7yL0
+
+# Short URL format
+https://youtu.be/6alQsbGNTOo
